@@ -1,67 +1,81 @@
 #ANTES DE RODAR O CÓDIGO NO LINUX:
-#sudo apt install wireless-tools iw
+#sudo apt install iw
 #sudo python3 ColetarDadosLinux.py
 
 # Tabela de medições
 # Objetivo:  x | y | sinal_% | RSSI_dBm | timestamp
-
 import subprocess
 import re
 from datetime import datetime
 import csv
-
-# grade fixa 5x5 (x: 0-4, y:0-4)
-INTERFACE = "wlp2s0"      
-GRID_X = 5
-GRID_Y = 5
+INTERFACE = "wlp1s0"
+GRID_SIZE = 5
 ARQUIVO = "medicoes_wifi_linux.csv"
 
-# assume uma ordem (ex: 0,0 -> 0,1 -> ... -> 4,4)
-dados = []
+with open(ARQUIVO, "w", newline="") as f:
+    writer = csv.writer(f)
+    writer.writerow([
+        "x",
+        "y",
+        "rssi_dbm",
+        "ruido_dbm",
+        "snr_db",
+        "frequencia_mhz",
+        "bssid",
+        "timestamp"
+    ])
 
-for x in range(GRID_X):
-    for y in range(GRID_Y):
-        input(f"Posicione-se no ponto ({x},{y}) e pressione ENTER")
+    for x in range(GRID_SIZE):
+        for y in range(GRID_SIZE):
 
-        saida = subprocess.check_output(
-        ["iwconfig", INTERFACE],
-        encoding="utf-8",
-        errors="ignore"
-        )   
+            input(f"Posicione-se no ponto ({x},{y}) e pressione ENTER")
 
-        rssi = re.search(r"Signal level=(-?\d+)\s*dBm", saida)
-        ruido = re.search(r"Noise level=(-?\d+)\s*dBm", saida)
-        bssid = re.search(r"Access Point:\s*([0-9A-Fa-f:]{17})", saida)
-        freq = re.search(r"Frequency:(\d+\.\d+)\s*GHz", saida)
+            saida_link = subprocess.check_output(
+                ["iw", "dev", INTERFACE, "link"],
+                encoding="utf-8",
+                errors="ignore"
+            )
 
-        if not rssi or not ruido or not bssid or not freq:
-            raise ValueError("Não foi possível extrair dados do Wi-Fi")
+            rssi = int(re.search(r"signal:\s*(-\d+)", saida_link).group(1))
+            freq = int(float(re.search(r"freq:\s*([\d\.]+)", saida_link).group(1)))
+            bssid = re.search(r"Connected to\s+([0-9a-f:]+)", saida_link).group(1)
 
-        rssi_dbm = int(rssi.group(1))
-        ruido_dbm = int(ruido.group(1))
-        snr_db = rssi_dbm - ruido_dbm
+            saida_survey = subprocess.check_output(
+                ["iw", "dev", INTERFACE, "survey", "dump"],
+                encoding="utf-8",
+                errors="ignore"
+            )
 
-        freq_ghz = float(freq.group(1))
-        frequencia = "2.4 GHz" if freq_ghz < 3 else "5 GHz"
+            ruido = None
+            blocos = saida_survey.split("Survey data from")
 
-        info =  {
-            "rssi_dbm": rssi_dbm,
-            "ruido_dbm": ruido_dbm,
-            "snr_db": snr_db,
-            "frequencia": frequencia,
-            "bssid": bssid.group(1),
-            "timestamp": datetime.now()
-        }
+            for bloco in blocos:
+                if str(freq) in bloco:
+                    ruido = int(re.search(r"noise:\s*(-\d+)", bloco).group(1))
+                    break
 
-        info["x"] = x
-        info["y"] = y
-        dados.append(info)
-        print("Coletado:", info)
+            if ruido is not None:
+                snr = rssi - ruido
+            else:
+                snr = None
 
-# salvar tabela
-with open(ARQUIVO, "w", newline="", encoding="utf-8") as f:
-    writer = csv.DictWriter(f, fieldnames=dados[0].keys())
-    writer.writeheader()
-    writer.writerows(dados)
+            writer.writerow([
+                x,
+                y,
+                rssi,
+                ruido,
+                snr,
+                freq,
+                bssid,
+                datetime.now()
+            ])
 
-print(f"\nArquivo {ARQUIVO} salvo com sucesso!")
+            print(
+                f"Coletado ({x},{y}) | "
+                f"RSSI={rssi} dBm | "
+                f"Ruído={ruido} dBm | "
+                f"SNR={snr} dB | "
+                f"Freq={freq} MHz"
+            )
+
+print("\nArquivo medicoes_wifi_linux.csv gerado com sucesso!")
